@@ -232,6 +232,12 @@
     .check-item.done .check-name { text-decoration: line-through; color: var(--muted); }
     .check-qty { flex-shrink: 0; font-size: 15px; font-weight: 800; color: var(--gold); }
     .check-item.done .check-qty { color: var(--muted); }
+    .extra-tag { display:inline-block; background: var(--gold-dim); color: var(--gold); font-size: 10px;
+      font-weight: 700; padding: 1px 7px; border-radius: 20px; margin-left: 6px; vertical-align: middle; }
+    .btn-x { flex-shrink: 0; background: transparent; border: 1px solid var(--border); color: var(--muted);
+      width: 30px; height: 30px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .btn-x:active { opacity: .7; }
+    .shop-item.editing { border-style: dashed; }
   </style>
 </head>
 <body>
@@ -312,7 +318,10 @@
       <!-- ── GETRÄNKE (Bedarf erfassen) ── -->
       <div class="view" id="viewGetraenke">
         <p class="shop-intro">Menge einstellen, wie viel du brauchst — dann unten die Einkaufsliste erstellen.</p>
-        <button class="btn btn-outline" onclick="openShopItemModal('getraenke')">＋ Artikel hinzufügen</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-outline" style="flex:1;" onclick="openShopItemModal('getraenke')">＋ Artikel</button>
+          <button class="btn btn-outline" style="flex:1;" id="editBtnGetraenke" onclick="toggleEditMode('getraenke')">✎ Bearbeiten</button>
+        </div>
         <div id="getraenkeList" style="margin-top:14px;"><div class="loading">Lade…</div></div>
         <button class="btn btn-primary" style="margin-top:6px;" onclick="generateList('getraenke')">🛒 Einkaufsliste erstellen</button>
       </div>
@@ -320,7 +329,10 @@
       <!-- ── SHISHA (Bedarf erfassen) ── -->
       <div class="view" id="viewShisha">
         <p class="shop-intro">Menge einstellen, wie viel du brauchst — dann unten die Einkaufsliste erstellen.</p>
-        <button class="btn btn-outline" onclick="openShopItemModal('shisha')">＋ Artikel hinzufügen</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-outline" style="flex:1;" onclick="openShopItemModal('shisha')">＋ Artikel</button>
+          <button class="btn btn-outline" style="flex:1;" id="editBtnShisha" onclick="toggleEditMode('shisha')">✎ Bearbeiten</button>
+        </div>
         <div id="shishaList" style="margin-top:14px;"><div class="loading">Lade…</div></div>
         <button class="btn btn-primary" style="margin-top:6px;" onclick="generateList('shisha')">🛒 Einkaufsliste erstellen</button>
       </div>
@@ -486,7 +498,8 @@
     editingArticleId: null, // null = neuer Artikel
     shopItems: [],          // Bedarfs-Artikel Getränke/Shisha [{id, name, group, unit, need, active}]
     shopLists: [],          // erzeugte Einkaufslisten [{id, title, group, items:[], done, createdAt}]
-    openListId: null        // aktuell geöffnete Einkaufsliste (Detail) oder null
+    openListId: null,       // aktuell geöffnete Einkaufsliste (Detail) oder null
+    shopEdit: { getraenke: false, shisha: false } // Bearbeiten-Modus je Reiter
   };
 
   // ─── Helpers ────────────────────────────────────────────────────────
@@ -875,32 +888,68 @@
   function renderShop(group) {
     const box = $(group === 'getraenke' ? 'getraenkeList' : 'shishaList');
     if (!box) return;
+    const edit = !!state.shopEdit[group];
+    const eb = $(group === 'getraenke' ? 'editBtnGetraenke' : 'editBtnShisha');
+    if (eb) { eb.textContent = edit ? '✓ Fertig' : '✎ Bearbeiten'; eb.className = 'btn ' + (edit ? 'btn-primary' : 'btn-outline'); }
     const items = state.shopItems.filter(i => i.group === group && i.active !== false);
     if (!items.length) {
-      box.innerHTML = `<div class="empty">Noch keine Artikel.<br>Tippe oben auf <b>＋ Artikel hinzufügen</b>.</div>`;
+      box.innerHTML = `<div class="empty">Noch keine Artikel.<br>Tippe oben auf <b>＋ Artikel</b>.</div>`;
       return;
     }
     let html = '', curSec = null;
+    if (edit) html += `<p class="shop-intro">Tippe einen Artikel an, um <b>Name / Sollbestand / Bereich</b> zu ändern oder ihn zu löschen. Mit <b>↑ ↓</b> die Reihenfolge verschieben.</p>`;
     items.forEach(i => {
       const sec = i.section || '';
       if (sec !== curSec) { curSec = sec; if (sec) html += `<div class="section-title">${esc(sec)}</div>`; }
       const need = i.need || 0;
       const sub = [];
       if (i.soll) sub.push('Soll: ' + esc(i.soll));
-      if (need > 0) sub.push(`<b style="color:var(--gold)">Bedarf: ${need}</b>`);
-      html += `<div class="shop-item${need > 0 ? ' has-need' : ''}">
+      if (!edit && need > 0) sub.push(`<b style="color:var(--gold)">Bedarf: ${need}</b>`);
+      const controls = edit
+        ? `<div class="shop-step">
+             <button type="button" onclick="moveItem('${i.id}',-1)">↑</button>
+             <button type="button" onclick="moveItem('${i.id}',1)">↓</button>
+           </div>`
+        : `<div class="shop-step">
+             <button type="button" onclick="stepNeed('${i.id}',-1)">−</button>
+             <span class="n">${need}</span>
+             <button type="button" onclick="stepNeed('${i.id}',1)">＋</button>
+           </div>`;
+      html += `<div class="shop-item${!edit && need > 0 ? ' has-need' : ''}${edit ? ' editing' : ''}">
         <div class="shop-main" onclick="openShopItemModal('${group}','${i.id}')">
-          <div class="shop-name">${esc(i.name)}</div>
+          <div class="shop-name">${edit ? '✎ ' : ''}${esc(i.name)}</div>
           <div class="shop-unit">${sub.join(' · ') || esc(i.unit || 'Stück')}</div>
         </div>
-        <div class="shop-step">
-          <button type="button" onclick="stepNeed('${i.id}',-1)">−</button>
-          <span class="n">${need}</span>
-          <button type="button" onclick="stepNeed('${i.id}',1)">＋</button>
-        </div>
+        ${controls}
       </div>`;
     });
     box.innerHTML = html;
+  }
+
+  function toggleEditMode(group) {
+    state.shopEdit[group] = !state.shopEdit[group];
+    renderShop(group);
+    window.scrollTo(0, 0);
+  }
+
+  async function moveItem(id, dir) {
+    const it = state.shopItems.find(x => x.id === id);
+    if (!it) return;
+    const sameSec = state.shopItems.filter(i =>
+      i.group === it.group && i.active !== false && (i.section || '') === (it.section || ''));
+    const idx = sameSec.findIndex(i => i.id === id);
+    const other = sameSec[idx + dir];
+    if (!other) return; // schon ganz oben/unten im Bereich
+    const a = it.sort ?? 0, b = other.sort ?? 0;
+    it.sort = b; other.sort = a; // optimistisch
+    state.shopItems.sort((x, y) => ((x.sort ?? 9999) - (y.sort ?? 9999)) || (x.name || '').localeCompare(y.name || '', 'de'));
+    renderShop(it.group);
+    try {
+      const batch = fdb.batch();
+      batch.update(fdb.collection('wws_shopping_items').doc(it.id), { sort: it.sort });
+      batch.update(fdb.collection('wws_shopping_items').doc(other.id), { sort: other.sort });
+      await batch.commit();
+    } catch (e) { console.error(e); toast('Fehler beim Verschieben.', 'bad'); }
   }
 
   function stepNeed(id, delta) {
@@ -953,8 +1002,11 @@
         });
         toast('Artikel gespeichert.', 'ok');
       } else {
+        const maxSort = state.shopItems
+          .filter(i => i.group === shopModalGroup)
+          .reduce((m, i) => Math.max(m, i.sort ?? 0), 0);
         await fdb.collection('wws_shopping_items').add({
-          name, group: shopModalGroup, unit, soll, section, need: 0, active: true,
+          name, group: shopModalGroup, unit, soll, section, need: 0, active: true, sort: maxSort + 1,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
@@ -1041,11 +1093,44 @@
       <div>${items.map((it, idx) => `
         <div class="check-item${it.checked ? ' done' : ''}" onclick="toggleCheck('${l.id}',${idx})">
           <div class="check-box">${it.checked ? '✓' : ''}</div>
-          <div class="check-name">${esc(it.name)}</div>
-          <div class="check-qty">${it.qty} ${esc(it.unit || '')}</div>
+          <div class="check-name">${esc(it.name)}${it.extra ? ' <span class="extra-tag">Sonder</span>' : ''}</div>
+          ${it.extra
+            ? `<button class="btn-x" onclick="event.stopPropagation(); removeExtraItem('${l.id}',${idx})">✕</button>`
+            : `<div class="check-qty">${it.qty} ${esc(it.unit || '')}</div>`}
         </div>`).join('')}</div>
-      <button class="btn ${l.done ? 'btn-outline' : 'btn-primary'}" style="margin-top:20px;" onclick="toggleListDone('${l.id}')">${l.done ? 'Wieder als offen markieren' : '✓ Einkauf abschließen'}</button>
+      <div class="field" style="margin-top:18px;">
+        <span class="label">Sonderartikel hinzufügen (einmaliger Bedarf)</span>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="extraItemInput" placeholder="z. B. Spezial-Deko, Ersatzteil …" style="flex:1;"
+            onkeydown="if(event.key==='Enter'){event.preventDefault(); addExtraItem('${l.id}');}">
+          <button class="btn btn-primary" style="flex:0 0 auto; width:auto; padding:0 20px;" onclick="addExtraItem('${l.id}')">＋</button>
+        </div>
+      </div>
+      <button class="btn ${l.done ? 'btn-outline' : 'btn-primary'}" style="margin-top:18px;" onclick="toggleListDone('${l.id}')">${l.done ? 'Wieder als offen markieren' : '✓ Einkauf abschließen'}</button>
       <button class="btn btn-danger" style="margin-top:10px;" onclick="deleteList('${l.id}')">Liste löschen</button>`;
+  }
+
+  async function addExtraItem(listId) {
+    const inp = $('extraItemInput');
+    const name = (inp ? inp.value : '').trim();
+    if (!name) { toast('Bitte einen Artikel eingeben.', 'bad'); return; }
+    const l = state.shopLists.find(x => x.id === listId);
+    if (!l) return;
+    const items = [...(l.items || []), { name, qty: 1, unit: '', checked: false, extra: true }];
+    l.items = items;            // optimistisch
+    renderEinkaufDetail();
+    try { await fdb.collection('wws_shopping_lists').doc(listId).update({ items }); }
+    catch (e) { console.error(e); toast('Fehler beim Speichern.', 'bad'); }
+  }
+
+  async function removeExtraItem(listId, idx) {
+    const l = state.shopLists.find(x => x.id === listId);
+    if (!l) return;
+    const items = (l.items || []).filter((_, i) => i !== idx);
+    l.items = items;            // optimistisch
+    renderEinkaufDetail();
+    try { await fdb.collection('wws_shopping_lists').doc(listId).update({ items }); }
+    catch (e) { console.error(e); toast('Fehler beim Löschen.', 'bad'); }
   }
 
   async function toggleCheck(listId, idx) {
