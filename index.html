@@ -420,6 +420,14 @@
         <input type="text" id="shopName" placeholder="z. B. Cola 0,33 · Al Fakher Traube">
       </div>
       <div class="field">
+        <span class="label">Sollbestand</span>
+        <input type="text" id="shopSoll" placeholder="z. B. 4 x 6 Flaschen · Mid. 6 Kästen">
+      </div>
+      <div class="field">
+        <span class="label">Bereich</span>
+        <input type="text" id="shopSection" placeholder="z. B. Softdrinks, Sirups, Schnaps">
+      </div>
+      <div class="field">
         <span class="label">Einheit</span>
         <input type="text" id="shopUnit" placeholder="z. B. Kiste, Dose, kg, Karton">
       </div>
@@ -576,7 +584,7 @@
     // Bedarfs-Artikel (Getränke/Shisha)
     fdb.collection('wws_shopping_items').onSnapshot((qs) => {
       state.shopItems = qs.docs.map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
+        .sort((a, b) => ((a.sort ?? 9999) - (b.sort ?? 9999)) || (a.name || '').localeCompare(b.name || '', 'de'));
       if (state.unlocked) { renderShop('getraenke'); renderShop('shisha'); }
     }, (err) => console.error(err));
 
@@ -872,12 +880,18 @@
       box.innerHTML = `<div class="empty">Noch keine Artikel.<br>Tippe oben auf <b>＋ Artikel hinzufügen</b>.</div>`;
       return;
     }
-    box.innerHTML = items.map(i => {
+    let html = '', curSec = null;
+    items.forEach(i => {
+      const sec = i.section || '';
+      if (sec !== curSec) { curSec = sec; if (sec) html += `<div class="section-title">${esc(sec)}</div>`; }
       const need = i.need || 0;
-      return `<div class="shop-item${need > 0 ? ' has-need' : ''}">
+      const sub = [];
+      if (i.soll) sub.push('Soll: ' + esc(i.soll));
+      if (need > 0) sub.push(`<b style="color:var(--gold)">Bedarf: ${need}</b>`);
+      html += `<div class="shop-item${need > 0 ? ' has-need' : ''}">
         <div class="shop-main" onclick="openShopItemModal('${group}','${i.id}')">
           <div class="shop-name">${esc(i.name)}</div>
-          <div class="shop-unit">${esc(i.unit || 'Stück')}${need > 0 ? ` · Bedarf: ${need}` : ''}</div>
+          <div class="shop-unit">${sub.join(' · ') || esc(i.unit || 'Stück')}</div>
         </div>
         <div class="shop-step">
           <button type="button" onclick="stepNeed('${i.id}',-1)">−</button>
@@ -885,7 +899,8 @@
           <button type="button" onclick="stepNeed('${i.id}',1)">＋</button>
         </div>
       </div>`;
-    }).join('');
+    });
+    box.innerHTML = html;
   }
 
   function stepNeed(id, delta) {
@@ -909,11 +924,15 @@
       shopModalGroup = it.group;
       $('shopItemTitle').textContent = 'Artikel bearbeiten';
       $('shopName').value = it.name || '';
+      $('shopSoll').value = it.soll || '';
+      $('shopSection').value = it.section || '';
       $('shopUnit').value = it.unit || '';
       del.style.display = '';
     } else {
       $('shopItemTitle').textContent = group === 'getraenke' ? 'Neuer Getränke-Artikel' : 'Neuer Shisha-Artikel';
       $('shopName').value = '';
+      $('shopSoll').value = '';
+      $('shopSection').value = '';
       $('shopUnit').value = group === 'getraenke' ? 'Kiste' : 'Dose';
       del.style.display = 'none';
     }
@@ -924,16 +943,18 @@
     const name = $('shopName').value.trim();
     if (!name) { toast('Bitte einen Namen eingeben.', 'bad'); $('shopName').classList.add('err'); return; }
     const unit = $('shopUnit').value.trim() || 'Stück';
+    const soll = $('shopSoll').value.trim();
+    const section = $('shopSection').value.trim();
     const btn = $('shopSubmit'); btn.disabled = true;
     try {
       if (shopEditId) {
         await fdb.collection('wws_shopping_items').doc(shopEditId).update({
-          name, unit, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          name, unit, soll, section, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
         toast('Artikel gespeichert.', 'ok');
       } else {
         await fdb.collection('wws_shopping_items').add({
-          name, group: shopModalGroup, unit, need: 0, active: true,
+          name, group: shopModalGroup, unit, soll, section, need: 0, active: true,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
