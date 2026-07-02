@@ -13,6 +13,7 @@
 
   <!-- Firebase (gleiches Projekt wie die Checklisten-App) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
   <style>
@@ -361,7 +362,8 @@
     appId:             "1:234921800965:web:525dd3b4f01f36a6a5336c"
   };
   firebase.initializeApp(firebaseConfig);
-  const fdb = firebase.firestore();
+  const fdb   = firebase.firestore();
+  const fauth = firebase.auth();
 
   // ─── Konstanten ─────────────────────────────────────────────────────
   const CATEGORIES = ['Shisha-Bedarf', 'Getränke', 'Snacks', 'Verbrauchsmaterial'];
@@ -756,11 +758,29 @@
 
   // ─── Start ──────────────────────────────────────────────────────────
   $('gateBtn').disabled = true;
-  startListeners();
-  if (sessionStorage.getItem('wws_unlocked') === '1') {
-    state.unlocked = true;
-    enterApp();
+
+  // Datenbank-Verbindung erst aufbauen, wenn die anonyme Anmeldung steht.
+  // So können die Firestore-Regeln „nur angemeldete Zugriffe" verlangen.
+  let booted = false;
+  function boot() {
+    if (booted) return;
+    booted = true;
+    startListeners();
+    if (sessionStorage.getItem('wws_unlocked') === '1') {
+      state.unlocked = true;
+      enterApp();
+    }
   }
+
+  // Unsichtbarer Technik-Login (Mitarbeiter merken davon nichts).
+  fauth.onAuthStateChanged((user) => { if (user) boot(); });
+  fauth.signInAnonymously().catch((err) => {
+    // Schlägt fehl, solange „Anonymous" in Firebase noch nicht aktiviert ist –
+    // dann greift unten das Sicherheitsnetz (funktioniert, solange die Regeln offen sind).
+    console.error('Anonyme Anmeldung fehlgeschlagen:', err);
+  });
+  // Sicherheitsnetz: App auch ohne Anmeldung starten (nur relevant in der Umstellungsphase).
+  setTimeout(() => { if (!booted) boot(); }, 3000);
   </script>
 </body>
 </html>
