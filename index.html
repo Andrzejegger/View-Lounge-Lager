@@ -599,6 +599,9 @@
       state.shopItems = qs.docs.map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => ((a.sort ?? 9999) - (b.sort ?? 9999)) || (a.name || '').localeCompare(b.name || '', 'de'));
       if (state.unlocked) { renderShop('getraenke'); renderShop('shisha'); }
+      // Einmalige Imports erst starten, wenn die vorhandenen Artikel geladen sind
+      // (sonst wäre maxSort=0 und neue Bereiche landeten oben statt unten).
+      if (!seedsRun) { seedsRun = true; maybeSeedShishaTabak(); maybeSeedTkFruechte(); }
     }, (err) => console.error(err));
 
     // Erzeugte Einkaufslisten
@@ -1244,6 +1247,37 @@
     } catch (err) { console.error('Shisha-Import-Fehler:', err); }
   }
 
+  // Einmaliger Import der TK-Früchte als eigener Bereich unten bei den Getränken (per Flag gesichert)
+  async function maybeSeedTkFruechte() {
+    try {
+      const flag = await fdb.doc('wws_config/meta').get();
+      if (flag.exists && flag.data().seededTkFruechte) return;
+      const tk = [
+        { name: 'Himbeeren',  soll: '1 x 2,5 kg' },
+        { name: 'Erdbeeren',  soll: '1 x 2,5 kg' },
+        { name: 'Mango',      soll: '1 x 3,0 kg' },
+        { name: 'Beeren-Mix', soll: '1 x 2,5 kg' }
+      ];
+      // Ans Ende der bestehenden Getränke-Artikel einsortieren → Bereich erscheint ganz unten
+      const maxSort = state.shopItems
+        .filter(i => i.group === 'getraenke')
+        .reduce((m, i) => Math.max(m, i.sort ?? 0), 0);
+      const batch = fdb.batch();
+      tk.forEach((t, idx) => {
+        const ref = fdb.collection('wws_shopping_items').doc();
+        batch.set(ref, {
+          name: t.name, group: 'getraenke', unit: 'Packung', soll: t.soll, section: 'TK Früchte',
+          need: 0, active: true, sort: maxSort + 1 + idx,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+      batch.set(fdb.doc('wws_config/meta'), { seededTkFruechte: true }, { merge: true });
+      await batch.commit();
+      console.log('TK-Früchte importiert (' + tk.length + ').');
+    } catch (err) { console.error('TK-Früchte-Import-Fehler:', err); }
+  }
+
   // ─── Modal-Steuerung ────────────────────────────────────────────────
   function openModal(id) {
     document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
@@ -1263,12 +1297,12 @@
   // Datenbank-Verbindung erst aufbauen, wenn die anonyme Anmeldung steht.
   // So können die Firestore-Regeln „nur angemeldete Zugriffe" verlangen.
   let booted = false;
+  let seedsRun = false; // Einmalige Imports (Shisha-Tabak, TK-Früchte) laufen nach erstem Snapshot
   function boot() {
     if (booted) return;
     booted = true;
     startListeners();
     maybeSeedShopping();
-    maybeSeedShishaTabak();
     if (sessionStorage.getItem('wws_unlocked') === '1') {
       state.unlocked = true;
       enterApp();
