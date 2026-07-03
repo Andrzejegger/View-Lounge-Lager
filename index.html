@@ -1186,6 +1186,64 @@
     } catch (err) { console.error('Seed-Fehler (Regeln evtl. noch nicht aktualisiert):', err); }
   }
 
+  // Einmaliger Import der Shisha-Tabak-Sorten (per Flag gesichert, läuft nur einmal)
+  async function maybeSeedShishaTabak() {
+    try {
+      const flag = await fdb.doc('wws_config/meta').get();
+      if (flag.exists && flag.data().seededShishaTabak) return;
+      const tabak = [
+        // Fix auf Karte
+        { section: 'Fix auf Karte', name: 'Black Box',                 soll: '1 kg' },
+        { section: 'Fix auf Karte', name: 'Orange',                    soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Blaulicht',                 soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Bruderherz',                soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Zitrone (Lemon Fresh)',     soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'African Queen',             soll: '1 kg' },
+        { section: 'Fix auf Karte', name: 'Ice Kaktus',                soll: '1 kg' },
+        { section: 'Fix auf Karte', name: 'Blaubeere (Blue Fresh)',    soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Vanille',                   soll: '2 x 200g' },
+        { section: 'Fix auf Karte', name: 'Ice Bon Bon (Candy Breeze)', soll: '2 x 200g' },
+        { section: 'Fix auf Karte', name: 'Wassermelone (Water fresh)', soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Pfirsich',                  soll: '1 kg' },
+        { section: 'Fix auf Karte', name: 'Hamburg',                   soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Tingel Tangle',             soll: '2 x 200g' },
+        { section: 'Fix auf Karte', name: 'Big Bagmann',               soll: '2 x 200g' },
+        { section: 'Fix auf Karte', name: 'Black Nana',                soll: '1 kg' },
+        { section: 'Fix auf Karte', name: 'Love 66',                   soll: '1 kg / 5 x 200g' },
+        { section: 'Fix auf Karte', name: 'Raffaello',                 soll: '2 x 200g' },
+        { section: 'Fix auf Karte', name: 'Bonny & Clyde',            soll: '2 x 200g' },
+        { section: 'Fix auf Karte', name: 'Da Bomb',                   soll: '2 x 200g' },
+        { section: 'Fix auf Karte', name: 'Birne (Pear fresh)',        soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Falim red',                 soll: '3 x 200g' },
+        { section: 'Fix auf Karte', name: 'Doppelapfel',               soll: '1 kg' },
+        { section: 'Fix auf Karte', name: 'Traube Minze',              soll: '2 kg' },
+        { section: 'Fix auf Karte', name: 'Minze',                     soll: '2 kg' },
+        { section: 'Fix auf Karte', name: 'Cold Death',                soll: '2 x 200g' },
+        // Fix nicht auf Karte
+        { section: 'Fix nicht auf Karte', name: 'Kirsche',             soll: '1 x 200g' },
+        { section: 'Fix nicht auf Karte', name: 'Banane',             soll: '1 x 200g' },
+        { section: 'Fix nicht auf Karte', name: 'Black Kaktuz',        soll: '1 x 200g' }
+      ];
+      // Ans Ende bestehender Shisha-Artikel einsortieren
+      const maxSort = state.shopItems
+        .filter(i => i.group === 'shisha')
+        .reduce((m, i) => Math.max(m, i.sort ?? 0), 0);
+      const batch = fdb.batch();
+      tabak.forEach((t, idx) => {
+        const ref = fdb.collection('wws_shopping_items').doc();
+        batch.set(ref, {
+          name: t.name, group: 'shisha', unit: 'Dose', soll: t.soll, section: t.section,
+          need: 0, active: true, sort: maxSort + 1 + idx,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+      batch.set(fdb.doc('wws_config/meta'), { seededShishaTabak: true }, { merge: true });
+      await batch.commit();
+      console.log('Shisha-Tabak-Sorten importiert (' + tabak.length + ').');
+    } catch (err) { console.error('Shisha-Import-Fehler:', err); }
+  }
+
   // ─── Modal-Steuerung ────────────────────────────────────────────────
   function openModal(id) {
     document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
@@ -1210,6 +1268,7 @@
     booted = true;
     startListeners();
     maybeSeedShopping();
+    maybeSeedShishaTabak();
     if (sessionStorage.getItem('wws_unlocked') === '1') {
       state.unlocked = true;
       enterApp();
