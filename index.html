@@ -237,6 +237,14 @@
     .btn-x { flex-shrink: 0; background: transparent; border: 1px solid var(--border); color: var(--muted);
       width: 30px; height: 30px; border-radius: 8px; font-size: 13px; cursor: pointer; }
     .btn-x:active { opacity: .7; }
+    .btn-move { flex-shrink: 0; background: transparent; border: 1.5px solid var(--gold); color: var(--gold);
+      width: 30px; height: 30px; border-radius: 50%; font-size: 20px; line-height: 1; font-weight: 800;
+      cursor: pointer; display: grid; place-items: center; padding: 0; }
+    .btn-move:active { opacity: .6; background: var(--gold-dim); }
+    .note-tag { display:inline-block; background: var(--surface-2); color: var(--gold); font-size: 10px;
+      font-weight: 700; padding: 1px 7px; border-radius: 20px; margin-left: 6px; vertical-align: middle; }
+    .move-row { display: flex; gap: 8px; align-items: center; padding: 8px 4px 14px 38px;
+      border-bottom: 1px solid var(--border); }
     .shop-item.editing { border-style: dashed; }
   </style>
 </head>
@@ -499,6 +507,7 @@
     shopItems: [],          // Bedarfs-Artikel Getränke/Shisha [{id, name, group, unit, need, active}]
     shopLists: [],          // erzeugte Einkaufslisten [{id, title, group, items:[], done, createdAt}]
     openListId: null,       // aktuell geöffnete Einkaufsliste (Detail) oder null
+    moveIdx: null,          // Index des Artikels, der gerade auf die Separat-Liste verschoben wird
     shopEdit: { getraenke: false, shisha: false } // Bearbeiten-Modus je Reiter
   };
 
@@ -1077,8 +1086,8 @@
     }).join('');
   }
 
-  function openList(id) { state.openListId = id; window.scrollTo(0, 0); renderEinkaufDetail(); }
-  function backToLists() { state.openListId = null; renderEinkauf(); }
+  function openList(id) { state.openListId = id; state.moveIdx = null; window.scrollTo(0, 0); renderEinkaufDetail(); }
+  function backToLists() { state.openListId = null; state.moveIdx = null; renderEinkauf(); }
 
   function renderEinkaufDetail() {
     const l = state.shopLists.find(x => x.id === state.openListId);
@@ -1093,14 +1102,33 @@
         <div class="modal-title">${esc(l.title)}</div>
         <div class="modal-sub">${fmtDate(l.createdAt)} · ${done}/${items.length} erledigt</div>
       </div>
-      <div>${items.map((it, idx) => `
-        <div class="check-item${it.checked ? ' done' : ''}" onclick="toggleCheck('${l.id}',${idx})">
+      <div>${items.map((it, idx) => {
+        const noteTag = it.note ? ` <span class="note-tag">${esc(it.note)}</span>` : '';
+        let right;
+        if (it.extra) {
+          right = `<button class="btn-x" onclick="event.stopPropagation(); removeExtraItem('${l.id}',${idx})">✕</button>`;
+        } else if (l.separate) {
+          right = `<div class="check-qty">${it.qty} ${esc(it.unit || '')}</div>
+            <button class="btn-x" onclick="event.stopPropagation(); removeExtraItem('${l.id}',${idx})">✕</button>`;
+        } else {
+          right = `<div class="check-qty">${it.qty} ${esc(it.unit || '')}</div>
+            <button class="btn-move" title="Zur Separat-Liste verschieben" onclick="event.stopPropagation(); startMove(${idx})">•</button>`;
+        }
+        const row = `<div class="check-item${it.checked ? ' done' : ''}" onclick="toggleCheck('${l.id}',${idx})">
           <div class="check-box">${it.checked ? '✓' : ''}</div>
-          <div class="check-name">${esc(it.name)}${it.extra ? ' <span class="extra-tag">Sonder</span>' : ''}</div>
-          ${it.extra
-            ? `<button class="btn-x" onclick="event.stopPropagation(); removeExtraItem('${l.id}',${idx})">✕</button>`
-            : `<div class="check-qty">${it.qty} ${esc(it.unit || '')}</div>`}
-        </div>`).join('')}</div>
+          <div class="check-name">${esc(it.name)}${it.extra ? ' <span class="extra-tag">Sonder</span>' : ''}${noteTag}</div>
+          ${right}
+        </div>`;
+        const moveField = (state.moveIdx === idx && !l.separate)
+          ? `<div class="move-row">
+              <input type="text" id="moveStoreInput" placeholder="Geschäft, z. B. EDEKA, Supermarkt …" style="flex:1;"
+                onkeydown="if(event.key==='Enter'){event.preventDefault(); confirmMove('${l.id}',${idx});}">
+              <button class="btn btn-primary" style="flex:0 0 auto; width:auto; padding:0 16px;" onclick="confirmMove('${l.id}',${idx})">✓</button>
+              <button class="btn btn-outline" style="flex:0 0 auto; width:auto; padding:0 14px;" onclick="cancelMove()">✕</button>
+            </div>`
+          : '';
+        return row + moveField;
+      }).join('')}</div>
       <div class="field" style="margin-top:18px;">
         <span class="label">Sonderartikel hinzufügen (einmaliger Bedarf)</span>
         <div style="display:flex; gap:8px;">
@@ -1111,6 +1139,40 @@
       </div>
       <button class="btn ${l.done ? 'btn-outline' : 'btn-primary'}" style="margin-top:18px;" onclick="toggleListDone('${l.id}')">${l.done ? 'Wieder als offen markieren' : '✓ Einkauf abschließen'}</button>
       <button class="btn btn-danger" style="margin-top:10px;" onclick="deleteList('${l.id}')">Liste löschen</button>`;
+    if (state.moveIdx !== null) { const mi = $('moveStoreInput'); if (mi) mi.focus(); }
+  }
+
+  function startMove(idx)  { state.moveIdx = idx; renderEinkaufDetail(); }
+  function cancelMove()    { state.moveIdx = null; renderEinkaufDetail(); }
+
+  // Artikel aus der aktuellen Liste in die gemeinsame „Separat einkaufen"-Liste verschieben
+  async function confirmMove(listId, idx) {
+    const mi = $('moveStoreInput');
+    const store = (mi ? mi.value : '').trim();
+    const l = state.shopLists.find(x => x.id === listId);
+    if (!l) return;
+    const it = (l.items || [])[idx];
+    if (!it) { state.moveIdx = null; renderEinkaufDetail(); return; }
+    const moved = { name: it.name, qty: it.qty, unit: it.unit || '', checked: false, note: store };
+    const remaining = l.items.filter((_, i) => i !== idx);
+    const sep = state.shopLists.find(x => x.separate);
+    // optimistisch aus der Original-Liste entfernen
+    state.moveIdx = null;
+    l.items = remaining;
+    renderEinkaufDetail();
+    try {
+      await fdb.collection('wws_shopping_lists').doc(listId).update({ items: remaining });
+      if (sep) {
+        const sepItems = [...(sep.items || []), moved];
+        await fdb.collection('wws_shopping_lists').doc(sep.id).update({ items: sepItems });
+      } else {
+        await fdb.collection('wws_shopping_lists').add({
+          title: 'Separat einkaufen', separate: true, done: false, items: [moved],
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+      toast(store ? `Nach „${store}" verschoben.` : 'Auf Separat-Liste verschoben.', 'ok');
+    } catch (e) { console.error(e); toast('Fehler beim Verschieben.', 'bad'); }
   }
 
   async function addExtraItem(listId) {
