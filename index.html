@@ -194,6 +194,15 @@
 
     /* ─── Bedarfs-Liste (Getränke/Shisha) ─── */
     .shop-intro { font-size: 12px; color: var(--muted); line-height: 1.5; margin-bottom: 14px; }
+    .budget-box { display: none; border: 1px solid var(--gold); background: var(--gold-dim); border-radius: 12px;
+      padding: 10px 12px; margin-bottom: 14px; font-size: 13px; line-height: 1.45; }
+    .budget-box.show { display: block; }
+    .budget-box .b-head { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); font-weight: 700; margin-bottom: 4px; }
+    .budget-box .b-row { display: flex; justify-content: space-between; gap: 10px; }
+    .budget-box .b-val { font-weight: 800; font-size: 17px; color: var(--gold); white-space: nowrap; }
+    .budget-box .b-vw { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+    .budget-box .b-over { color: #e57373; font-weight: 700; }
+    .budget-box .b-under { color: #81c784; font-weight: 700; }
     .shop-item { display: flex; align-items: center; gap: 12px; background: var(--surface);
       border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px;
       transition: border-color var(--dur); }
@@ -325,6 +334,7 @@
 
       <!-- ── GETRÄNKE (Bedarf erfassen) ── -->
       <div class="view" id="viewGetraenke">
+        <div class="budget-box" id="budgetGetraenke"></div>
         <p class="shop-intro">Menge einstellen, wie viel du brauchst — dann unten die Einkaufsliste erstellen.</p>
         <div style="display:flex; gap:8px;">
           <button class="btn btn-outline" style="flex:1;" onclick="openShopItemModal('getraenke')">＋ Artikel</button>
@@ -336,6 +346,7 @@
 
       <!-- ── SHISHA (Bedarf erfassen) ── -->
       <div class="view" id="viewShisha">
+        <div class="budget-box" id="budgetShisha"></div>
         <p class="shop-intro">Menge einstellen, wie viel du brauchst — dann unten die Einkaufsliste erstellen.</p>
         <div style="display:flex; gap:8px;">
           <button class="btn btn-outline" style="flex:1;" onclick="openShopItemModal('shisha')">＋ Artikel</button>
@@ -347,6 +358,7 @@
 
       <!-- ── EINKAUF (Listen abhaken) ── -->
       <div class="view" id="viewEinkauf">
+        <div class="budget-box" id="budgetEinkauf"></div>
         <div id="einkaufOverview"><div class="loading">Lade Einkaufslisten…</div></div>
         <div id="einkaufDetail" style="display:none;"></div>
       </div>
@@ -496,6 +508,7 @@
 
   // ─── State ──────────────────────────────────────────────────────────
   const state = {
+    budget:    null,          // Wochenbudget (wws_config/budget, schreibt der VPS montags)
     password:  DEFAULT_PW,
     pwLoaded:  false,
     articles:  [],          // [{id, name, category, unit, stock, active, ...}]
@@ -587,6 +600,12 @@
       } else {
         state.staff = [...DEFAULT_STAFF];
       }
+    }, (err) => console.error(err));
+
+    // Einkaufsbudget der Woche (schreibt der Server montags; nur Budget + Ist der Vorwoche, kein Umsatz)
+    fdb.doc('wws_config/budget').onSnapshot((snap) => {
+      state.budget = snap.exists ? snap.data() : null;
+      renderBudget();
     }, (err) => console.error(err));
 
     // Artikel
@@ -1056,6 +1075,30 @@
       state.openListId = null;
       switchView('einkauf');
     } catch (err) { console.error(err); toast('Fehler beim Erstellen.', 'bad'); }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  EINKAUFSBUDGET — zwei Töpfe (Getränke & Food / Tabak & Kohle)
+  // ═══════════════════════════════════════════════════════════════════
+  function renderBudget() {
+    const b = state.budget;
+    const boxes = { getraenke: $('budgetGetraenke'), shisha: $('budgetShisha'), einkauf: $('budgetEinkauf') };
+    if (!b || !b.topf1 || !b.topf2) { Object.values(boxes).forEach(x => x && x.classList.remove('show')); return; }
+    const eur = (x) => Math.round(Number(x) || 0).toLocaleString('de-DE') + ' €';
+    const vw = (t) => {
+      if (t.vw_ist == null) return '';
+      if (t.vw_budget == null) return `Letzte Woche eingekauft: ${eur(t.vw_ist)}`;
+      const d = t.vw_ist - t.vw_budget;
+      return `Letzte Woche: ${eur(t.vw_ist)} von ${eur(t.vw_budget)} <span class="${d > 0 ? 'b-over' : 'b-under'}">(${d > 0 ? '+' : ''}${eur(d)})</span>`;
+    };
+    const zeile = (name, t) => `<div class="b-row"><span>${name}</span><span class="b-val">${eur(t.budget)}</span></div>`
+      + (vw(t) ? `<div class="b-vw">${vw(t)}</div>` : '');
+    const kopf = `<div class="b-head">💶 Einkaufsbudget ${esc(b.kw || '')}</div>`;
+    const fuss = `<div class="b-vw">netto · Stand ${esc(b.stand || '')}</div>`;
+    if (boxes.getraenke) boxes.getraenke.innerHTML = kopf + zeile('Getränke &amp; Food', b.topf1) + fuss;
+    if (boxes.shisha) boxes.shisha.innerHTML = kopf + zeile('Tabak &amp; Kohle', b.topf2) + fuss;
+    if (boxes.einkauf) boxes.einkauf.innerHTML = kopf + zeile('Getränke &amp; Food', b.topf1) + zeile('Tabak &amp; Kohle', b.topf2) + fuss;
+    Object.values(boxes).forEach(x => x && x.classList.add('show'));
   }
 
   // ═══════════════════════════════════════════════════════════════════
