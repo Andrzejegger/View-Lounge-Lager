@@ -203,6 +203,16 @@
     .budget-box .b-vw { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
     .budget-box .b-over { color: #e57373; font-weight: 700; }
     .budget-box .b-under { color: #81c784; font-weight: 700; }
+    .budget-box { cursor: pointer; }
+    .budget-box:active { opacity: .85; }
+    .budget-box .b-val.neg { color: #e57373; }
+    .budget-box .b-sub { font-size: 11.5px; color: var(--muted); }
+    .budget-box .b-tap { font-size: 11px; color: var(--gold); margin-top: 6px; }
+    .ausg-item { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .ausg-item small { color: var(--muted); display: block; font-size: 11.5px; }
+    .ausg-item button { background: none; border: 1px solid var(--border); color: var(--red); border-radius: 8px;
+      width: 32px; height: 32px; font-size: 15px; cursor: pointer; flex: 0 0 32px; }
     .shop-item { display: flex; align-items: center; gap: 12px; background: var(--surface);
       border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px;
       transition: border-color var(--dur); }
@@ -442,6 +452,32 @@
       <button class="btn btn-outline" style="margin-top:10px;" onclick="closeModal()">Abbrechen</button>
     </div>
 
+    <!-- Einkauf vom Wochenbudget abziehen -->
+    <div class="modal" id="modalBudget" style="display:none;">
+      <div class="modal-grip"></div>
+      <div class="modal-title">Einkauf abziehen</div>
+      <div class="modal-sub">Betrag eingeben, den du gerade ausgegeben hast (netto oder wie auf dem Kassenzettel – Hauptsache immer gleich).</div>
+      <div class="field">
+        <span class="label">Topf</span>
+        <div class="staff-grid" style="grid-template-columns:1fr 1fr;">
+          <button type="button" class="staff-btn" id="budTopf1" onclick="setBudTopf('topf1')">Getränke &amp; Food</button>
+          <button type="button" class="staff-btn" id="budTopf2" onclick="setBudTopf('topf2')">Tabak &amp; Kohle</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="label">Betrag in €</span>
+        <input type="text" id="budBetrag" inputmode="decimal" placeholder="z. B. 123,45" autocomplete="off">
+      </div>
+      <div class="field">
+        <span class="label">Wo? (optional)</span>
+        <input type="text" id="budWo" placeholder="z. B. Metro, Smokers, Edeka" autocomplete="off">
+      </div>
+      <button class="btn btn-primary" onclick="submitAusgabe()">Abziehen</button>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="closeModal()">Abbrechen</button>
+      <div class="section-title">Diese Woche abgezogen</div>
+      <div id="budListe"></div>
+    </div>
+
     <!-- Einkaufs-Artikel anlegen/bearbeiten (Getränke/Shisha) -->
     <div class="modal" id="modalShopItem" style="display:none;">
       <div class="modal-grip"></div>
@@ -509,6 +545,8 @@
   // ─── State ──────────────────────────────────────────────────────────
   const state = {
     budget:    null,          // Wochenbudget (wws_config/budget, schreibt der VPS montags)
+    ausgaben:  { kw: null, eintraege: [] },   // in der App abgezogene Einkäufe (wws_config/budget_ausgaben)
+    budTopf:   'topf1',
     password:  DEFAULT_PW,
     pwLoaded:  false,
     articles:  [],          // [{id, name, category, unit, stock, active, ...}]
@@ -606,6 +644,12 @@
     fdb.doc('wws_config/budget').onSnapshot((snap) => {
       state.budget = snap.exists ? snap.data() : null;
       renderBudget();
+    }, (err) => console.error(err));
+    fdb.doc('wws_config/budget_ausgaben').onSnapshot((snap) => {
+      const d = snap.exists ? snap.data() : {};
+      state.ausgaben = { kw: d.kw || null, eintraege: Array.isArray(d.eintraege) ? d.eintraege : [] };
+      renderBudget();
+      if ($('modalBudget').style.display === 'block') renderAusgabenListe();
     }, (err) => console.error(err));
 
     // Artikel
@@ -1080,25 +1124,90 @@
   // ═══════════════════════════════════════════════════════════════════
   //  EINKAUFSBUDGET — zwei Töpfe (Getränke & Food / Tabak & Kohle)
   // ═══════════════════════════════════════════════════════════════════
+  const eurB = (x) => (Math.round((Number(x) || 0) * 100) / 100).toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' €';
+  function ausgabenDieseWoche() {
+    const b = state.budget, a = state.ausgaben;
+    return (b && a.kw === b.kw) ? a.eintraege : [];
+  }
+  function ausgegeben(topf) {
+    return ausgabenDieseWoche().filter(e => e.topf === topf).reduce((s, e) => s + (Number(e.betrag) || 0), 0);
+  }
+
   function renderBudget() {
     const b = state.budget;
     const boxes = { getraenke: $('budgetGetraenke'), shisha: $('budgetShisha'), einkauf: $('budgetEinkauf') };
     if (!b || !b.topf1 || !b.topf2) { Object.values(boxes).forEach(x => x && x.classList.remove('show')); return; }
-    const eur = (x) => Math.round(Number(x) || 0).toLocaleString('de-DE') + ' €';
     const vw = (t) => {
       if (t.vw_ist == null) return '';
-      if (t.vw_budget == null) return `Letzte Woche eingekauft: ${eur(t.vw_ist)}`;
-      const d = t.vw_ist - t.vw_budget;
-      return `Letzte Woche: ${eur(t.vw_ist)} von ${eur(t.vw_budget)} <span class="${d > 0 ? 'b-over' : 'b-under'}">(${d > 0 ? '+' : ''}${eur(d)})</span>`;
+      if (t.vw_budget == null) return `Letzte Woche eingekauft (Lexware): ${eurB(Math.round(t.vw_ist))}`;
+      const d = Math.round(t.vw_ist - t.vw_budget);
+      return `Letzte Woche (Lexware): ${eurB(Math.round(t.vw_ist))} von ${eurB(Math.round(t.vw_budget))} <span class="${d > 0 ? 'b-over' : 'b-under'}">(${d > 0 ? '+' : ''}${eurB(d)})</span>`;
     };
-    const zeile = (name, t) => `<div class="b-row"><span>${name}</span><span class="b-val">${eur(t.budget)}</span></div>`
-      + (vw(t) ? `<div class="b-vw">${vw(t)}</div>` : '');
+    const zeile = (name, key) => {
+      const t = b[key], aus = ausgegeben(key), rest = t.budget - aus;
+      return `<div class="b-row"><span>${name}<br><span class="b-sub">Budget ${eurB(Math.round(t.budget))}${aus ? ' · abgezogen ' + eurB(aus) : ''}</span></span>`
+        + `<span style="text-align:right"><span class="b-sub">noch frei</span><br><span class="b-val${rest < 0 ? ' neg' : ''}">${eurB(rest)}</span></span></div>`
+        + (vw(t) ? `<div class="b-vw">${vw(t)}</div>` : '');
+    };
     const kopf = `<div class="b-head">💶 Einkaufsbudget ${esc(b.kw || '')}</div>`;
-    const fuss = `<div class="b-vw">netto · Stand ${esc(b.stand || '')}</div>`;
-    if (boxes.getraenke) boxes.getraenke.innerHTML = kopf + zeile('Getränke &amp; Food', b.topf1) + fuss;
-    if (boxes.shisha) boxes.shisha.innerHTML = kopf + zeile('Tabak &amp; Kohle', b.topf2) + fuss;
-    if (boxes.einkauf) boxes.einkauf.innerHTML = kopf + zeile('Getränke &amp; Food', b.topf1) + zeile('Tabak &amp; Kohle', b.topf2) + fuss;
+    const fuss = `<div class="b-tap">👆 Antippen, um einen Einkauf abzuziehen</div>`;
+    if (boxes.getraenke) { boxes.getraenke.innerHTML = kopf + zeile('Getränke &amp; Food', 'topf1') + fuss; boxes.getraenke.onclick = () => openBudgetModal('topf1'); }
+    if (boxes.shisha) { boxes.shisha.innerHTML = kopf + zeile('Tabak &amp; Kohle', 'topf2') + fuss; boxes.shisha.onclick = () => openBudgetModal('topf2'); }
+    if (boxes.einkauf) {
+      boxes.einkauf.innerHTML = kopf + zeile('Getränke &amp; Food', 'topf1') + '<div style="height:8px"></div>' + zeile('Tabak &amp; Kohle', 'topf2') + fuss;
+      boxes.einkauf.onclick = () => openBudgetModal(state.budTopf || 'topf1');
+    }
     Object.values(boxes).forEach(x => x && x.classList.add('show'));
+  }
+
+  function setBudTopf(topf) {
+    state.budTopf = topf;
+    $('budTopf1').classList.toggle('selected', topf === 'topf1');
+    $('budTopf2').classList.toggle('selected', topf === 'topf2');
+  }
+  function openBudgetModal(topf) {
+    if (!state.budget) return;
+    $('budBetrag').value = ''; $('budWo').value = '';
+    setBudTopf(topf);
+    renderAusgabenListe();
+    openModal('modalBudget');
+    setTimeout(() => $('budBetrag').focus(), 250);
+  }
+  function renderAusgabenListe() {
+    const liste = ausgabenDieseWoche().slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    $('budListe').innerHTML = liste.length ? liste.map(e => `<div class="ausg-item"><div><b>${eurB(e.betrag)}</b> · ${e.topf === 'topf2' ? 'Tabak &amp; Kohle' : 'Getränke &amp; Food'}`
+      + `<small>${esc(e.wo || '')}${e.wo ? ' · ' : ''}${new Date(e.ts).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small></div>`
+      + `<button title="Löschen" onclick="deleteAusgabe('${esc(e.id)}')">✕</button></div>`).join('')
+      : '<div class="empty" style="padding:14px 0">Noch nichts abgezogen.</div>';
+  }
+  async function submitAusgabe() {
+    const roh = $('budBetrag').value.trim().replace(/\s|€/g, '').replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.');
+    const betrag = Math.round(parseFloat(roh) * 100) / 100;
+    if (!roh || !isFinite(betrag) || betrag <= 0 || betrag > 100000) { $('budBetrag').classList.add('err'); toast('Bitte einen gültigen Betrag eingeben', 'err'); return; }
+    const kw = state.budget.kw;
+    const e = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), topf: state.budTopf, betrag, wo: $('budWo').value.trim().slice(0, 40), ts: Date.now() };
+    const ref = fdb.doc('wws_config/budget_ausgaben');
+    try {
+      await fdb.runTransaction(async (tx) => {
+        const s = await tx.get(ref);
+        const d = s.exists ? s.data() : {};
+        const liste = (d.kw === kw && Array.isArray(d.eintraege)) ? d.eintraege : [];
+        tx.set(ref, { kw, eintraege: [...liste, e] });
+      });
+      closeModal();
+      toast(`${eurB(betrag)} abgezogen`);
+    } catch (err) { console.error(err); toast('Speichern fehlgeschlagen', 'err'); }
+  }
+  async function deleteAusgabe(id) {
+    if (!confirm('Diesen Eintrag löschen?')) return;
+    const ref = fdb.doc('wws_config/budget_ausgaben');
+    try {
+      await fdb.runTransaction(async (tx) => {
+        const s = await tx.get(ref);
+        const d = s.exists ? s.data() : {};
+        tx.set(ref, { kw: d.kw || null, eintraege: (d.eintraege || []).filter(x => x.id !== id) });
+      });
+    } catch (err) { console.error(err); toast('Löschen fehlgeschlagen', 'err'); }
   }
 
   // ═══════════════════════════════════════════════════════════════════
