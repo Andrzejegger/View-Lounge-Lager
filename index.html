@@ -456,7 +456,7 @@
     <div class="modal" id="modalBudget" style="display:none;">
       <div class="modal-grip"></div>
       <div class="modal-title">Einkauf abziehen</div>
-      <div class="modal-sub">Betrag eingeben, den du gerade ausgegeben hast (netto oder wie auf dem Kassenzettel – Hauptsache immer gleich).</div>
+      <div class="modal-sub">Den <b>Gesamtbetrag vom Kassenzettel</b> eingeben (inkl. MwSt.). Leergut-Rückgabe vorher abziehen.</div>
       <div class="field">
         <span class="label">Topf</span>
         <div class="staff-grid" style="grid-template-columns:1fr 1fr;">
@@ -465,7 +465,7 @@
         </div>
       </div>
       <div class="field">
-        <span class="label">Betrag in €</span>
+        <span class="label">Betrag laut Kassenzettel in €</span>
         <input type="text" id="budBetrag" inputmode="decimal" placeholder="z. B. 123,45" autocomplete="off">
       </div>
       <div class="field">
@@ -1149,7 +1149,7 @@
         + `<span style="text-align:right"><span class="b-sub">noch frei</span><br><span class="b-val${rest < 0 ? ' neg' : ''}">${eurB(rest)}</span></span></div>`
         + (vw(t) ? `<div class="b-vw">${vw(t)}</div>` : '');
     };
-    const kopf = `<div class="b-head">💶 Einkaufsbudget ${esc(b.kw || '')}</div>`;
+    const kopf = `<div class="b-head">💶 Einkaufsbudget ${esc(b.kw || '')} · inkl. MwSt.</div>`;
     const fuss = `<div class="b-tap">👆 Antippen, um einen Einkauf abzuziehen</div>`;
     if (boxes.getraenke) { boxes.getraenke.innerHTML = kopf + zeile('Getränke &amp; Food', 'topf1') + fuss; boxes.getraenke.onclick = () => openBudgetModal('topf1'); }
     if (boxes.shisha) { boxes.shisha.innerHTML = kopf + zeile('Tabak &amp; Kohle', 'topf2') + fuss; boxes.shisha.onclick = () => openBudgetModal('topf2'); }
